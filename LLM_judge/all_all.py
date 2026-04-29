@@ -61,7 +61,7 @@ def judge_redundancy_all_in_all_out(messages, task_purpose=""):
 
     client_roma = OpenAI(
         base_url=base_url,
-        api_key="sk-emC4sdL85VD55BsnpHwcQs7GIyBz0ZpNzZ3XKvqLXpqLqk15",
+        api_key="",
         default_headers={"Content-Type": "application/json",
                          "csb-token": ""},
     )

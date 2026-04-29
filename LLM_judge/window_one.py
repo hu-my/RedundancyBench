@@ -72,7 +72,7 @@ def judge_message_with_window(target_message, window_messages, target_index_in_w
 
     client_roma = OpenAI(
         base_url=base_url,
-        api_key="sk-532158a525f445b4b2fc273b8026ff23",
+        api_key="",
         default_headers={"Content-Type": "application/json",
                          "csb-token": ""},
     )
