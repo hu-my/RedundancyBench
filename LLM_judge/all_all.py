@@ -139,7 +139,7 @@ def main():
             "parsed_result": parsed_result
         })
 
-    output_file = 'dsv4pro_all_all_airline_results.json'
+    output_file = ''
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(all_results, f, ensure_ascii=False, indent=2)
     print(f"\nsave to {output_file}")
