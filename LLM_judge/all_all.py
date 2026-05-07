@@ -15,49 +15,77 @@ def read_messages(json_file_path):
     return data.get('simulations', [])
 
 
+def response_parser(response, model_name='gpt-4o'):
+    if '```json' in response:
+        response = response.split('json\n')[-1][:-4]
+
+    return response
+
+
+
 def read_tasks(json_file_path):
     """读取 JSON 文件中的 tasks 列表，提取每条任务的 purpose"""
     with open(json_file_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
     tasks = data.get('tasks', [])
-    return [t.get('description', {}).get('purpose', '') for t in tasks]
+    return {t.get('task_id'): t.get('description', {}).get('purpose', '') for t in tasks}
+
+
+def filter_messages(messages):
+    new_messages = []
+    for msg in messages:
+        if msg['role'] == 'tool':
+            new_messages.append(msg)
+        else: # 'role' = assistant or user
+            new_msg = {}
+            new_msg['role'] = msg['role']
+            new_msg['content'] = msg['content']
+            new_msg['tool_calls'] = msg['tool_calls']
+            new_msg['turn_idx'] = msg['turn_idx']
+            new_msg['timestamp'] = msg['timestamp']
+            new_msg['usage'] = msg['usage']
+            new_messages.append(new_msg)
+    return new_messages
 
 
 def judge_redundancy_all_in_all_out(messages, task_purpose=""):
     """
     全入全出逻辑：一次性输入整条轨迹，输出所有冗余步骤
     """
-    base_url = "https://api.openai-proxy.org/v1"
-    model_name = "gpt-4o-2024-08-06"
+    base_url = ""
+    model_name = ""
 
-#     sysprompt = '''你是一个负责寻找轨迹冗余步骤的裁判，检查轨迹中由assistant发起的toolcall动作以及tool执行结果是否冗余，判断逻辑为是否包含以下3点任意一点：
-# 1. 重复步骤、无效工具调用
-# 2. 不改变环境状态
-# 3. 偏离任务目标'''
-    sysprompt = '''你是一个负责寻找轨迹冗余步骤的裁判，检查轨迹中由assistant发起的toolcall动作以及tool执行结果是否冗余，判断逻辑为是否包含以下3点任意一点：
-1. 无效工具调用（例如因为网络问题，工具调用没有返回正常结果）
-2. 重复步骤（工具重复调用，且结果没有变化）
-3. 不在ground truth action范围内，且没有给ground truth action执行提供参数
-4. 偏离任务目标'''
+
+    sysprompt = '''You are a judge responsible for identifying redundant steps in the trajectory. Your task is to examine the "toolcall" actions initiated by the assistant and the corresponding execution results of the "tools" to determine if they are redundant. The criteria for judgment include any of the following three points:
+1. Toolcalls and their results should be considered redundant if they are not essential steps for completing the objective(Mark the suspicious ones as redundant).
+2. Invalid tool invocation (for example, due to network issues, the tool invocation did not return a normal result)
+3. Repeated steps (repeated tool invocation with no change in the result)
+for example, the messages includes:{
+{ "role": "assistant",XXX,"tool_calls": AB,"turn_idx": 4},
+{XXX"role": "tool","requestor": "assistant","turn_idx": 5,XXX},
+{ "role": "user",XXX,"tool_calls": CD,"turn_idx": 6},          
+}, 
+You should mark 4 and 5 simultaneously. If the "toolcall" mentioned in 4 is considered redundant, then you should do so.
+You don't need to consider "toolcall" in 6 because 6 was not initiated by the assistant,You also don't need to consider the messages initiated by the assistant either, but those where the toolcall is empty.'''
 
     purpose_section = f"""
-任务目标（ground truth）：
+Task objective：
 {task_purpose}
 """ if task_purpose else ""
 
-    prompt = f"""请根据以下信息进行任务完成度评估：
+    prompt = f"""Please evaluate the task completion based on the following information:
 {purpose_section}
-- 整条轨迹信息（messages里的每个字典代表一步，一步可能是用户输入，模型思考，toolcall）：
+- The entire trajectory information (each dictionary in messages represents a step, and a step could be user input, model thinking, or tool call):
 {messages}
 
-请严格依据上述信息，判断：**该轨迹中是否包含冗余动作**
+Please strictly base your judgment on the above information: **Does this trajectory contain redundant actions?** 
 
-请仅以如下 JSON 格式输出结果，不要包含任何额外文字、解释或 Markdown：
+Please output the result only in the following JSON format and do not include any additional text, explanations or Markdown:
 
-{{"冗余动作在messages里的位置（位置序号从0开始）": [1, 2, 3], "reason": "简要说明判断依据"}}
+{{"Redundant actions' positions in messages (position index starts from 0)": [1, 2, 3], "reason": "Briefly explain the basis for judgment"}}
 
-如果没有冗余动作则输出：
-{{"冗余动作在messages里的位置（位置序号从0开始）": [], "reason": "简要说明判断依据"}}"""
+If there are no redundant actions, output:
+{{"Positions of redundant actions in messages (position index starts from 0)": [], "reason": "Briefly explain the basis for the judgment"}}"""
 
     client_roma = OpenAI(
         base_url=base_url,
@@ -85,24 +113,23 @@ def judge_redundancy_all_in_all_out(messages, task_purpose=""):
 def main():
     all = read_messages('airline_results.json')
     tasks = read_tasks('airline_results.json')
-    print(f"共有 {len(all)} 条轨迹，{len(tasks)} 个任务目标")
+
 
     all_results = []
     for m in range(0, len(all)):
-        messages = all[m]['messages']
-        task_purpose = tasks[m] if m < len(tasks) else ""
-        print(f"\n=== 轨迹 {m}，共有 {len(messages)} 条消息 ===")
-        if task_purpose:
-            print(f"任务目标: {task_purpose[:100]}...")
+        messages = filter_messages(all[m]['messages'])
+        task_purpose = tasks.get(all[m]['task_id'], "")
+
+
 
         result = judge_redundancy_all_in_all_out(messages, task_purpose)
-        print("AI 响应:", result)
+        print("AI:", result)
 
         parsed_result = None
         try:
-            parsed_result = json.loads(result)
+            parsed_result = json.loads(response_parser(result))
         except json.JSONDecodeError:
-            print("无法解析 JSON 结果")
+            print("error")
 
         all_results.append({
             "trajectory_index": m,
@@ -112,10 +139,10 @@ def main():
             "parsed_result": parsed_result
         })
 
-    output_file = '../all_all_airline_results.json'
+    output_file = 'dsv4pro_all_all_airline_results.json'
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(all_results, f, ensure_ascii=False, indent=2)
-    print(f"\n所有结果已保存到 {output_file}")
+    print(f"\nsave to {output_file}")
 
 
 if __name__ == "__main__":
