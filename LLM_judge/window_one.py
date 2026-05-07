@@ -16,11 +16,11 @@ def read_messages(json_file_path):
 
 
 def read_tasks(json_file_path):
-    """读取 JSON 文件中的 tasks 列表，提取每条任务的 purpose"""
+    """读取 JSON 文件中的 tasks 列表，返回 {task_id: purpose} 映射"""
     with open(json_file_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
     tasks = data.get('tasks', [])
-    return [t.get('description', {}).get('purpose', '') for t in tasks]
+    return {t.get('task_id'): t.get('description', {}).get('purpose', '') for t in tasks}
 
 
 def has_tool_call_or_result(message):
@@ -38,37 +38,43 @@ def judge_message_with_window(target_message, window_messages, target_index_in_w
     """
     滑动窗口判断逻辑：给当前消息 + 前后各3条上下文，判断当前消息是否冗余
     """
-    base_url = "https://api.deepseek.com"
-    model_name = "deepseek-v4-pro"
+    base_url = ""
+    model_name = ""
 
-    sysprompt = '''你是一个负责寻找轨迹冗余步骤的裁判，检查轨迹中由assistant发起的toolcall动作以及tool执行结果是否冗余，判断逻辑为是否包含以下3点任意一点：
-1. 无效工具调用（例如因为网络问题，工具调用没有返回正常结果）
-2. 重复步骤（工具重复调用，且结果没有变化）
-3. 不在ground truth action范围内，且没有给ground truth action执行提供参数
-4. 偏离任务目标'''
+    sysprompt = '''You are a judge responsible for identifying redundant steps in the trajectory. Your task is to examine the "toolcall" actions initiated by the assistant and the corresponding execution results of the "tools" to determine if they are redundant. The criteria for judgment include any of the following three points:
+    1. Toolcalls and their results should be considered redundant if they are not essential steps for completing the objective(Mark the suspicious ones as redundant).
+    2. Invalid tool invocation (for example, due to network issues, the tool invocation did not return a normal result)
+    3. Repeated steps (repeated tool invocation with no change in the result)
+    for example, the messages includes:{
+    { "role": "assistant",XXX,"tool_calls": AB,"turn_idx": 4},
+    {XXX"role": "tool","requestor": "assistant","turn_idx": 5,XXX},
+    { "role": "user",XXX,"tool_calls": CD,"turn_idx": 6},          
+    }, 
+    You should mark 4 and 5 simultaneously. If the "toolcall" mentioned in 4 is considered redundant, then you should do so.
+    You don't need to consider "toolcall" in 6 because 6 was not initiated by the assistant,You also don't need to consider the messages initiated by the assistant either, but those where the toolcall is empty.'''
 
     purpose_section = f"""
-任务目标（ground truth）：
-{task_purpose}
-""" if task_purpose else ""
+    Task objective：
+    {task_purpose}
+    """ if task_purpose else ""
 
     window_json = json.dumps(window_messages, ensure_ascii=False, indent=2)
 
-    prompt = f"""请根据以下轨迹消息窗口判断是否冗余。
-{purpose_section}
-窗口中的消息列表（每个字典代表一步，请重点关注标为【当前判断消息】的那一条）：
-{window_json}
+    prompt = f"""Please evaluate the task completion based on the following information:
+    {purpose_section}
+    The message list in the window (each dictionary represents one step, please pay special attention to the one marked as 【Current judgment message】):
+    {window_json}
+    
+    The current judgment message is the message with index {target_index_in_window} in the window.
+    
+    Please strictly base your judgment on the above information: **Does this trajectory contain redundant actions?** 
 
-【当前判断消息】是窗口中索引为 {target_index_in_window} 的消息。
+    Please output the result only in the following JSON format and do not include any additional text, explanations or Markdown:
 
-请严格依据上述信息，判断：**该【当前判断消息】是否为冗余动作**
+    {{"is_redundant": true, "reason": "A brief explanation of the basis for the judgment."}}
 
-请仅以如下 JSON 格式输出结果，不要包含任何额外文字、解释或 Markdown：
-
-{{"is_redundant": true, "reason": "简要说明判断依据"}}
-
-如果不是冗余动作则输出：
-{{"is_redundant": false, "reason": "简要说明判断依据"}}"""
+    If there are no redundant actions, output:
+    {{"is_redundant": false, "reason": "A brief explanation of the basis for the judgment."}}"""
 
     client_roma = OpenAI(
         base_url=base_url,
@@ -94,17 +100,14 @@ def judge_message_with_window(target_message, window_messages, target_index_in_w
 
 
 def main():
-    all = read_messages('airline_resultstest.json')
-    tasks = read_tasks('airline_resultstest.json')
-    print(f"共有 {len(all)} 条轨迹，{len(tasks)} 个任务目标")
+    all = read_messages('telecom_results.json')
+    tasks = read_tasks('telecom_results.json')
 
     all_results = []
-    for m in range(0, 1):
+    for m in range(0, len(all)):
         messages = all[m].get('messages', [])
-        task_purpose = tasks[m] if m < len(tasks) else ""
-        print(f"\n=== 轨迹 {m}，共有 {len(messages)} 条消息 ===")
-        if task_purpose:
-            print(f"任务目标: {task_purpose[:100]}...")
+        task_purpose = tasks.get(all[m]['task_id'], "")
+
 
         trajectory_result = {
             "trajectory_index": m,
@@ -123,15 +126,13 @@ def main():
             window = messages[start:end]
             target_index_in_window = i - start
 
-            print(f"  判断消息 {i} (role={msg.get('role')})，窗口范围 [{start}:{end}]...")
             result = judge_message_with_window(msg, window, target_index_in_window, task_purpose)
-            print(f"    AI 响应: {result}")
 
             parsed_result = None
             try:
                 parsed_result = json.loads(result)
             except json.JSONDecodeError:
-                print("    无法解析 JSON 结果")
+                print("    JSON error")
 
             trajectory_result["judged_messages"].append({
                 "message_index": i,
@@ -143,10 +144,10 @@ def main():
 
         all_results.append(trajectory_result)
 
-    output_file = 'window_one_results.json'
+    output_file = 'dsv4flash_window_one_telecom_results.json'
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(all_results, f, ensure_ascii=False, indent=2)
-    print(f"\n所有结果已保存到 {output_file}")
+    print(f"\nsave to {output_file}")
 
 
 if __name__ == "__main__":
