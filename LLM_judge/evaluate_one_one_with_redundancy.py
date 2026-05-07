@@ -128,47 +128,23 @@ def evaluate(gt, pred):
 
 
 def main():
-    gt = load_ground_truth('airline_检验后标注.json')
-    pred = load_predictions('dsv4flash_window_one_airline_results.json')
+    gt = load_ground_truth('')
+    pred = load_predictions('')
 
     result = evaluate(gt, pred)
 
     s = result['summary']
-    print("=" * 50)
-    print("one_one 评估结果（含冗余判断）")
-    print("=" * 50)
 
-    print("\n--- 步骤级别精确匹配 ---")
-    print(f"总任务数: {s['total_tasks']}")
-    print(f"完全正确的任务数: {s['correct_tasks']}")
-    print(f"正确率 (Accuracy): {s['accuracy']:.2%}")
-    print(f"总体 Precision: {s['overall_precision']:.4f}")
-    print(f"总体 Recall: {s['overall_recall']:.4f}")
-    print(f"总体 F1: {s['overall_f1']:.4f}")
-    print(f"总 TP: {s['total_tp']}, FP: {s['total_fp']}, FN: {s['total_fn']}")
-
-    print("\n--- 轨迹级别冗余判断 ---")
-    print(f"冗余判断正确数: {s['both_redundant'] + s['both_non_redundant']} / {s['total_tasks']}")
-    print(f"冗余判断正确率: {s['redundancy_detection_accuracy']:.2%}")
-    print(f"  双方都有冗余: {s['both_redundant']}")
-    print(f"  双方都无冗余: {s['both_non_redundant']}")
-    print(f"  GT有冗余但预测漏掉: {s['gt_redundant_only']}")
-    print(f"  GT无冗余但预测误报: {s['pred_redundant_only']}")
-    print("=" * 50)
 
     for r in result['per_task']:
         step_status = "正确" if r['correct'] else "错误"
         red_status = "正确" if r['redundancy_match'] else "错误"
-        print(f"\nTask {r['task_id']}")
-        print(f"  步骤匹配 [{step_status}] | 冗余判断 [{red_status}]")
-        print(f"  真值: {r['ground_truth']}")
-        print(f"  预测: {r['predicted']}")
-        print(f"  TP={r['tp']} FP={r['fp']} FN={r['fn']}  P={r['precision']:.2f} R={r['recall']:.2f} F1={r['f1']:.2f}")
 
-    output_file = 'evaluate_window_one_airline_with_redundancy_result.json'
+
+    output_file = ''
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
-    print(f"\n详细结果已保存到 {output_file}")
+    print(f"\nsave to {output_file}")
 
 
 if __name__ == "__main__":
