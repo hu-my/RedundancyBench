@@ -136,10 +136,7 @@ def main():
         for i, msg in enumerate(messages):
             if not has_tool_call_or_result(msg):
                 continue
-
-            print(f"  判断消息 {i} (role={msg.get('role')})...")
             result = judge_single_message(msg, task_purpose)
-            print(f"    AI 响应: {result}")
 
             parsed_result = None
             try:
